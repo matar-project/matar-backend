@@ -123,7 +123,7 @@ export class AuthService implements OnModuleInit {
     email: string;
     role: { name: string };
   }) {
-    const accessTtl = this.getNumberConfig('JWT_ACCESS_TTL_SECONDS', 30);
+    const accessTtl = this.getNumberConfig('JWT_ACCESS_TTL_SECONDS', 15 * 60);
     const refreshTtl = this.getNumberConfig(
       'JWT_REFRESH_TTL_SECONDS',
       7 * 24 * 60 * 60,
