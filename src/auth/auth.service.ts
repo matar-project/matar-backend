@@ -10,15 +10,11 @@ import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
-import { SignupDto } from './dto/signup.dto';
+import { SIGNUP_ROLES, SignupDto } from './dto/signup.dto';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
-  private readonly roleNames = [
-    'admin',
-    'vlounteer',
-    'visually_impired',
-  ] as const;
+  private readonly roleNames = ['admin', ...SIGNUP_ROLES] as const;
 
   constructor(
     private readonly prisma: PrismaService,
