@@ -1,0 +1,8 @@
+model Settings {
+  id             Int     @id @default(1)
+  whatsappLink   String?
+  facebookLink   String?
+  messengerLink  String?
+  volunteerCount Int     @default(0)
+  requestCount   Int     @default(0)
+}
