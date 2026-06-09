@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { SIGNUP_ROLES, SignupDto } from './dto/signup.dto';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
   private readonly roleNames = ['admin', ...SIGNUP_ROLES] as const;
 
   constructor(
@@ -23,18 +25,23 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    this.logger.log(`Seeding roles: ${this.roleNames.join(', ')}`);
     await this.prisma.role.createMany({
       data: this.roleNames.map((name) => ({ name })),
       skipDuplicates: true,
     });
+    this.logger.log('Roles seeded successfully');
   }
 
   async signup(signupDto: SignupDto) {
+    this.logger.log(`Signup attempt for email=${signupDto.email} role=${signupDto.role}`);
+
     const existingUser = await this.prisma.user.findUnique({
       where: { email: signupDto.email },
     });
 
     if (existingUser) {
+      this.logger.warn(`Signup failed — email already registered: ${signupDto.email}`);
       throw new ConflictException('Email is already registered');
     }
 
@@ -43,6 +50,7 @@ export class AuthService implements OnModuleInit {
     });
 
     if (!role) {
+      this.logger.error('Signup failed — application roles have not been initialized');
       throw new Error('Application roles have not been initialized');
     }
 
@@ -57,10 +65,13 @@ export class AuthService implements OnModuleInit {
       include: { role: true },
     });
 
+    this.logger.log(`User created: id=${user.id} email=${user.email} role=${user.role.name}`);
     return this.createSession(user);
   }
 
   async login(loginDto: LoginDto) {
+    this.logger.log(`Login attempt for email=${loginDto.email}`);
+
     const user = await this.prisma.user.findUnique({
       where: { email: loginDto.email },
       include: { role: true },
@@ -70,13 +81,16 @@ export class AuthService implements OnModuleInit {
       !user ||
       !(await bcrypt.compare(loginDto.password, user.passwordHash))
     ) {
+      this.logger.warn(`Login failed — invalid credentials for email=${loginDto.email}`);
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    this.logger.log(`Login successful: id=${user.id} email=${user.email} role=${user.role.name}`);
     return this.createSession(user);
   }
 
   async refresh(refreshToken: string) {
+    this.logger.log('Token refresh attempt');
     let payload: { sub: number; type: string };
 
     try {
@@ -84,10 +98,12 @@ export class AuthService implements OnModuleInit {
         secret: this.getRequiredConfig('JWT_REFRESH_SECRET'),
       });
     } catch {
+      this.logger.warn('Token refresh failed — invalid or expired JWT');
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
     if (payload.type !== 'refresh') {
+      this.logger.warn(`Token refresh failed — wrong token type="${payload.type}" for userId=${payload.sub}`);
       throw new UnauthorizedException('Invalid refresh token');
     }
 
@@ -96,12 +112,18 @@ export class AuthService implements OnModuleInit {
       include: { user: { include: { role: true } } },
     });
 
-    if (
-      !storedToken ||
-      storedToken.userId !== payload.sub ||
-      storedToken.revokedAt ||
-      storedToken.expiresAt <= new Date()
-    ) {
+    if (!storedToken || storedToken.userId !== payload.sub) {
+      this.logger.warn(`Token refresh failed — token not found or userId mismatch for userId=${payload.sub}`);
+      throw new UnauthorizedException('Refresh token is no longer valid');
+    }
+
+    if (storedToken.revokedAt) {
+      this.logger.warn(`Token refresh failed — token already revoked for userId=${storedToken.userId}`);
+      throw new UnauthorizedException('Refresh token is no longer valid');
+    }
+
+    if (storedToken.expiresAt <= new Date()) {
+      this.logger.warn(`Token refresh failed — token expired for userId=${storedToken.userId}`);
       throw new UnauthorizedException('Refresh token is no longer valid');
     }
 
@@ -110,6 +132,7 @@ export class AuthService implements OnModuleInit {
       data: { revokedAt: new Date() },
     });
 
+    this.logger.log(`Token refreshed for userId=${storedToken.userId}`);
     return this.createSession(storedToken.user);
   }
 
