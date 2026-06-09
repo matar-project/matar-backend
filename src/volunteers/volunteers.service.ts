@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVolunteerDto } from './dto/create-volunteer.dto';
 
@@ -8,9 +8,27 @@ export class VolunteersService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateVolunteerDto) {
-    this.logger.log(`Creating volunteer: name=${dto.name} email=${dto.email}`);
-    const volunteer = await this.prisma.volunteer.create({ data: dto });
+  async create(userId: number, dto: CreateVolunteerDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (!user.phone || !user.country || !user.city) {
+      throw new BadRequestException('Complete your country, city, and phone number before volunteering');
+    }
+
+    this.logger.log(`Creating volunteer: name=${user.name} email=${user.email}`);
+    const volunteer = await this.prisma.volunteer.create({
+      data: {
+        ...dto,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        country: user.country,
+        city: user.city,
+        preferredContact: 'WHATSAPP',
+      },
+    });
     this.logger.log(`Volunteer created: id=${volunteer.id}`);
     return volunteer;
   }

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { CreateBookRequestDto } from './dto/create-book-request.dto';
@@ -10,16 +10,22 @@ export class RequestsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async createRequest(dto: CreateRequestDto) {
+  async createRequest(userId: number, dto: CreateRequestDto) {
     this.logger.log('Creating service request');
-    const request = await this.prisma.request.create({ data: dto as any });
+    const contact = await this.getUserContact(userId);
+    const request = await this.prisma.request.create({
+      data: { ...dto, ...contact } as any,
+    });
     this.logger.log(`Service request created: id=${request.id}`);
     return request;
   }
 
-  async createBookRequest(dto: CreateBookRequestDto) {
+  async createBookRequest(userId: number, dto: CreateBookRequestDto) {
     this.logger.log('Creating book request');
-    const request = await this.prisma.bookRequest.create({ data: dto });
+    const contact = await this.getUserContact(userId);
+    const request = await this.prisma.bookRequest.create({
+      data: { ...dto, ...contact },
+    });
     this.logger.log(`Book request created: id=${request.id}`);
     return request;
   }
@@ -85,5 +91,34 @@ export class RequestsService {
     const stats = { totalVolunteers, totalRequests: totalRequests + bookRequests, completedRequests, libraryItems, opportunities };
     this.logger.log(`Stats: ${JSON.stringify(stats)}`);
     return stats;
+  }
+
+  private async getUserContact(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        email: true,
+        phone: true,
+        country: true,
+        city: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.phone || !user.country || !user.city) {
+      throw new BadRequestException('Complete your country, city, and phone number before creating a request');
+    }
+
+    return {
+      fullName: user.name,
+      email: user.email,
+      phone: user.phone,
+      country: user.country,
+      city: user.city,
+    };
   }
 }
