@@ -1,0 +1,46 @@
+enum RequestType {
+  BOOK_CONVERSION
+  AUDIO_RECORDING
+  EDUCATIONAL_SUPPORT
+  ACCOMPANIMENT
+  OTHER
+}
+
+enum RequestStatus {
+  NEW
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Request {
+  id          Int           @id @default(autoincrement())
+  fullName    String
+  phone       String
+  email       String?
+  city        String
+  requestType RequestType
+  details     String
+  status      RequestStatus @default(NEW)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model BookRequest {
+  id           Int           @id @default(autoincrement())
+  fullName     String
+  phone        String
+  email        String?
+  city         String
+  bookTitle    String
+  author       String?
+  subject      String
+  country      String?
+  curriculum   String?
+  academicYear String?
+  notes        String?
+  status       RequestStatus @default(NEW)
+  adminNotes   String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}

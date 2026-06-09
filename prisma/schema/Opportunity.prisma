@@ -1,0 +1,17 @@
+enum OpportunityStatus {
+  AVAILABLE
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Opportunity {
+  id             Int               @id @default(autoincrement())
+  title          String
+  description    String?
+  subject        String?
+  totalPages     Int?
+  remainingPages Int?
+  status         OpportunityStatus @default(AVAILABLE)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+}
