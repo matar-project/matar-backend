@@ -6,6 +6,7 @@ import {
   IsISO31661Alpha2,
   IsPhoneNumber,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -25,6 +26,7 @@ export class SignupDto {
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
   @IsEmail()
+  @Matches(/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/)
   email!: string;
 
   @ApiProperty({ example: '+962790000000' })
@@ -36,10 +38,10 @@ export class SignupDto {
   @IsISO31661Alpha2()
   country!: string;
 
-  @ApiProperty({ example: 'Amman', minLength: 2, maxLength: 100 })
+  @ApiProperty({ example: 'Amman', minLength: 2, maxLength: 30 })
   @IsString()
   @MinLength(2)
-  @MaxLength(100)
+  @MaxLength(30)
   city!: string;
 
   @ApiProperty({ example: 'StrongPassword123!', minLength: 8, maxLength: 72 })
