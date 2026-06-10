@@ -11,16 +11,27 @@ const prisma = new PrismaClient({
 
 async function main() {
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@matar.org';
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'Admin@1234!';
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? '12345678';
   const ADMIN_NAME = process.env.ADMIN_NAME ?? 'مدير النظام';
+
+  const COORDINATOR_EMAIL =
+    process.env.COORDINATOR_EMAIL ?? 'coordinator@matar.org';
+  const COORDINATOR_PASSWORD = process.env.COORDINATOR_PASSWORD ?? '12345678';
+  const COORDINATOR_NAME = process.env.COORDINATOR_NAME ?? 'منسق النظام';
+  const COORDINATOR_PHONE = process.env.COORDINATOR_PHONE;
 
   const adminRole = await prisma.role.upsert({
     where: { name: 'admin' },
     update: {},
     create: { name: 'admin' },
   });
+  const coordinatorRole = await prisma.role.upsert({
+    where: { name: 'coordinator' },
+    update: {},
+    create: { name: 'coordinator' },
+  });
 
-  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+  const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
 
   const admin = await prisma.user.upsert({
     where: { email: ADMIN_EMAIL },
@@ -28,13 +39,35 @@ async function main() {
     create: {
       name: ADMIN_NAME,
       email: ADMIN_EMAIL,
-      passwordHash,
+      passwordHash: adminPasswordHash,
       roleId: adminRole.id,
     },
   });
 
   console.log(`Admin user ready: id=${admin.id} email=${admin.email}`);
   console.log(`Password: ${ADMIN_PASSWORD}`);
+
+  const coordinatorPasswordHash = await bcrypt.hash(COORDINATOR_PASSWORD, 12);
+
+  const coordinator = await prisma.user.upsert({
+    where: { email: COORDINATOR_EMAIL },
+    update: {
+      roleId: coordinatorRole.id,
+      ...(COORDINATOR_PHONE ? { phone: COORDINATOR_PHONE } : {}),
+    },
+    create: {
+      name: COORDINATOR_NAME,
+      email: COORDINATOR_EMAIL,
+      phone: COORDINATOR_PHONE,
+      passwordHash: coordinatorPasswordHash,
+      roleId: coordinatorRole.id,
+    },
+  });
+
+  console.log(
+    `Coordinator user ready: id=${coordinator.id} email=${coordinator.email}`,
+  );
+  console.log(`Password: ${COORDINATOR_PASSWORD}`);
 }
 
 main()

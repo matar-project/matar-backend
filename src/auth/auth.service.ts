@@ -16,7 +16,7 @@ import { SIGNUP_ROLES, SignupDto } from './dto/signup.dto';
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
-  private readonly roleNames = ['admin', ...SIGNUP_ROLES] as const;
+  private readonly roleNames = ['admin', 'coordinator', ...SIGNUP_ROLES] as const;
 
   constructor(
     private readonly prisma: PrismaService,

@@ -1,47 +1,108 @@
 enum RequestType {
-  BOOK_CONVERSION
-  AUDIO_RECORDING
-  EDUCATIONAL_SUPPORT
+  PDF_TO_WORD
+  PDF_TO_AUDIO
   ACCOMPANIMENT
-  OTHER
 }
 
 enum RequestStatus {
-  NEW
-  IN_PROGRESS
-  COMPLETED
+  PENDING_COORDINATOR
+  COORDINATOR_ACCEPTED
+  COORDINATOR_REJECTED
+  DONE
 }
 
 model Request {
-  id          Int           @id @default(autoincrement())
-  fullName    String
-  phone       String
-  email       String?
-  country     String?
-  city        String
-  requestType RequestType
-  details     String
-  status      RequestStatus @default(NEW)
-  notes       String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id               Int               @id @default(autoincrement())
+  fullName         String
+  phone            String
+  email            String?
+  country          String?
+  city             String
+  createdByUserId  Int?
+  createdByUser    User?             @relation("CreatedRequests", fields: [createdByUserId], references: [id])
+  requestType      RequestType
+  title            String?
+  bookName         String?
+  conversionBookId Int?
+  conversionBook   ConversionBook?   @relation(fields: [conversionBookId], references: [id], onDelete: SetNull)
+  details          String
+  pdfFileUrl       String?
+  pdfOriginalName  String?
+  pdfStoredName    String?
+  pdfMimeType      String?
+  pdfFileSize      Int?
+  totalPages       Int?
+  status           RequestStatus     @default(PENDING_COORDINATOR)
+  notes            String?
+  coordinatorId    Int?
+  coordinator      User?             @relation("CoordinatedRequests", fields: [coordinatorId], references: [id])
+  coordinatorNotes String?
+  reservations     PageReservation[]
+  volunteerAssignment RequestVolunteerAssignment?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([createdByUserId])
+  @@index([coordinatorId])
+  @@index([conversionBookId])
+  @@index([status])
+  @@unique([pdfStoredName])
 }
 
-model BookRequest {
-  id           Int           @id @default(autoincrement())
-  fullName     String
-  phone        String
-  email        String?
-  city         String
-  bookTitle    String
-  author       String?
-  subject      String
-  country      String?
-  curriculum   String?
-  academicYear String?
-  notes        String?
-  status       RequestStatus @default(NEW)
-  adminNotes   String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+model ConversionBook {
+  id               Int       @id @default(autoincrement())
+  name             String
+  normalizedName   String    @unique
+  wordCompleted    Boolean   @default(false)
+  audioCompleted   Boolean   @default(false)
+  wordCompletedAt  DateTime?
+  audioCompletedAt DateTime?
+  requests         Request[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([wordCompleted])
+  @@index([audioCompleted])
+}
+
+model RequestVolunteerAssignment {
+  id          Int               @id @default(autoincrement())
+  requestId   Int               @unique
+  request     Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  volunteerId Int
+  volunteer   User              @relation("RequestVolunteerAssignments", fields: [volunteerId], references: [id])
+  status      ReservationStatus @default(IN_PROGRESS)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([volunteerId])
+  @@index([status])
+}
+
+enum ReservationStatus {
+  IN_PROGRESS
+  DONE
+  REJECTED
+  LATE
+}
+
+model PageReservation {
+  id              Int               @id @default(autoincrement())
+  requestId       Int
+  request         Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  volunteerId     Int
+  volunteer       User              @relation("VolunteerReservations", fields: [volunteerId], references: [id])
+  startPage       Int
+  endPage         Int
+  status          ReservationStatus @default(IN_PROGRESS)
+  deadlineAt      DateTime
+  completedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([requestId])
+  @@index([volunteerId])
+  @@index([status])
 }

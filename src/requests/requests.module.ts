@@ -5,10 +5,21 @@ import { RequestsService } from './requests.service';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { VisuallyImpairedGuard } from '../common/guards/visually-impaired.guard';
+import { CoordinatorGuard } from '../common/guards/coordinator.guard';
+import { VolunteerGuard } from '../common/guards/volunteer.guard';
+import { UploadedFileCleanupInterceptor } from './uploaded-file-cleanup.interceptor';
 
 @Module({
   imports: [JwtModule],
   controllers: [RequestsController],
-  providers: [RequestsService, AdminGuard, JwtAuthGuard, VisuallyImpairedGuard],
+  providers: [
+    RequestsService,
+    AdminGuard,
+    JwtAuthGuard,
+    VisuallyImpairedGuard,
+    CoordinatorGuard,
+    VolunteerGuard,
+    UploadedFileCleanupInterceptor,
+  ],
 })
 export class RequestsModule {}

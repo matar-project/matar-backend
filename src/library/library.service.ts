@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLibraryItemDto } from './dto/create-library-item.dto';
+import { paginated, pagination } from '../common/pagination';
 
 @Injectable()
 export class LibraryService {
@@ -8,22 +9,57 @@ export class LibraryService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(search?: string, author?: string, subject?: string, curriculum?: string, country?: string, page = 1, limit = 20) {
+  async findCompletedBooks(search?: string, page = 1, limit = 10) {
+    const paging = pagination(page, limit);
+    const where = {
+      AND: [
+        { OR: [{ wordCompleted: true }, { audioCompleted: true }] },
+        search
+          ? { name: { contains: search, mode: 'insensitive' as const } }
+          : {},
+      ],
+    };
+    const [data, total] = await Promise.all([
+      this.prisma.conversionBook.findMany({
+        where,
+        skip: paging.skip,
+        take: paging.limit,
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.conversionBook.count({ where }),
+    ]);
+    return paginated(data, total, paging.page, paging.limit);
+  }
+
+  async findAll(search?: string, author?: string, subject?: string, curriculum?: string, country?: string, page = 1, limit = 10) {
     this.logger.log(`Listing library items: page=${page} limit=${limit} search="${search ?? ''}" author="${author ?? ''}" subject="${subject ?? ''}"`);
-    const skip = (page - 1) * limit;
+    const paging = pagination(page, limit);
     const where: any = { published: true };
-    if (search) where.title = { contains: search, mode: 'insensitive' };
+    if (search) {
+      where.OR = [
+        'title',
+        'author',
+        'subject',
+        'curriculum',
+        'country',
+        'description',
+        'fileName',
+        'fileUrl',
+      ].map((field) => ({
+        [field]: { contains: search.trim(), mode: 'insensitive' },
+      }));
+    }
     if (author) where.author = { contains: author, mode: 'insensitive' };
     if (subject) where.subject = { contains: subject, mode: 'insensitive' };
     if (curriculum) where.curriculum = { contains: curriculum, mode: 'insensitive' };
     if (country) where.country = { contains: country, mode: 'insensitive' };
 
     const [data, total] = await Promise.all([
-      this.prisma.libraryItem.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+      this.prisma.libraryItem.findMany({ where, skip: paging.skip, take: paging.limit, orderBy: { createdAt: 'desc' } }),
       this.prisma.libraryItem.count({ where }),
     ]);
     this.logger.log(`Library items fetched: total=${total}`);
-    return { data, total, page, limit };
+    return paginated(data, total, paging.page, paging.limit);
   }
 
   async findOne(id: number) {
@@ -67,14 +103,31 @@ export class LibraryService {
     return deleted;
   }
 
-  async findAllAdmin(page = 1, limit = 20) {
+  async findAllAdmin(page = 1, limit = 10, search?: string) {
     this.logger.log(`Admin listing library items: page=${page} limit=${limit}`);
-    const skip = (page - 1) * limit;
+    const paging = pagination(page, limit);
+    const term = search?.trim();
+    const where = term
+      ? {
+          OR: [
+            'title',
+            'author',
+            'subject',
+            'curriculum',
+            'country',
+            'description',
+            'fileName',
+            'fileUrl',
+          ].map((field) => ({
+            [field]: { contains: term, mode: 'insensitive' as const },
+          })),
+        }
+      : {};
     const [data, total] = await Promise.all([
-      this.prisma.libraryItem.findMany({ skip, take: limit, orderBy: { createdAt: 'desc' } }),
-      this.prisma.libraryItem.count(),
+      this.prisma.libraryItem.findMany({ where, skip: paging.skip, take: paging.limit, orderBy: { createdAt: 'desc' } }),
+      this.prisma.libraryItem.count({ where }),
     ]);
     this.logger.log(`Admin library items fetched: total=${total}`);
-    return { data, total, page, limit };
+    return paginated(data, total, paging.page, paging.limit);
   }
 }
