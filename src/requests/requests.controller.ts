@@ -18,7 +18,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { RequestsService } from './requests.service';
 import { CreateRequestDto } from './dto/create-request.dto';
-import { CreateBookRequestDto } from './dto/create-book-request.dto';
 import { UpdateRequestDto } from './dto/update-request.dto';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { VisuallyImpairedGuard } from '../common/guards/visually-impaired.guard';
@@ -27,6 +26,7 @@ import { VolunteerGuard } from '../common/guards/volunteer.guard';
 import {
   AcceptRequestDto,
   RejectRequestDto,
+  UpdateCoordinatorRequestDto,
 } from './dto/coordinator-action.dto';
 import {
   CreateReservationDto,
@@ -76,36 +76,16 @@ export class RequestsController {
     response.download(file.path, file.originalName);
   }
 
-  @Post('book-requests')
-  @UseGuards(VisuallyImpairedGuard)
-  @ApiBearerAuth()
-  createBookRequest(
-    @Req() request: AuthenticatedRequest,
-    @Body() dto: CreateBookRequestDto,
-  ) {
-    return this.svc.createBookRequest(request.user.sub, dto);
-  }
-
   @Get('admin/requests')
   @UseGuards(AdminGuard)
   @ApiBearerAuth()
   findAllRequests(
     @Query('page') page = '1',
-    @Query('limit') limit = '20',
+    @Query('limit') limit = '10',
     @Query('status') status?: string,
+    @Query('search') search?: string,
   ) {
-    return this.svc.findAllRequests(+page, +limit, status);
-  }
-
-  @Get('admin/book-requests')
-  @UseGuards(AdminGuard)
-  @ApiBearerAuth()
-  findAllBookRequests(
-    @Query('page') page = '1',
-    @Query('limit') limit = '20',
-    @Query('status') status?: string,
-  ) {
-    return this.svc.findAllBookRequests(+page, +limit, status);
+    return this.svc.findAllRequests(+page, +limit, status, search);
   }
 
   @Patch('admin/requests/:id')
@@ -118,21 +98,26 @@ export class RequestsController {
     return this.svc.updateRequest(id, dto);
   }
 
-  @Patch('admin/book-requests/:id')
-  @UseGuards(AdminGuard)
-  @ApiBearerAuth()
-  updateBookRequest(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateRequestDto,
-  ) {
-    return this.svc.updateBookRequest(id, dto);
-  }
-
   @Get('coordinator/requests')
   @UseGuards(CoordinatorGuard)
   @ApiBearerAuth()
-  getCoordinatorRequests(@Query('status') status?: string) {
-    return this.svc.getCoordinatorRequests(status);
+  getCoordinatorRequests(
+    @Query('status') status?: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.svc.getCoordinatorRequests(status, +page, +limit, search);
+  }
+
+  @Patch('coordinator/requests/:id')
+  @UseGuards(CoordinatorGuard)
+  @ApiBearerAuth()
+  updateCoordinatorRequest(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCoordinatorRequestDto,
+  ) {
+    return this.svc.updateCoordinatorRequest(id, dto);
   }
 
   @Patch('coordinator/requests/:id/accept')
@@ -157,6 +142,16 @@ export class RequestsController {
     return this.svc.rejectRequest(id, request.user.sub, dto.reason);
   }
 
+  @Patch('coordinator/requests/:id/approve-completion')
+  @UseGuards(CoordinatorGuard)
+  @ApiBearerAuth()
+  approveRequestCompletion(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.svc.approveRequestCompletion(id, request.user.sub);
+  }
+
   @Get('coordinator/requests/:id/reservations')
   @UseGuards(CoordinatorGuard)
   @ApiBearerAuth()
@@ -167,8 +162,18 @@ export class RequestsController {
   @Get('coordinator/reservations')
   @UseGuards(CoordinatorGuard)
   @ApiBearerAuth()
-  getCoordinatorReservations(@Query('status') status?: string) {
-    return this.svc.getCoordinatorReservations(status);
+  getCoordinatorReservations(
+    @Query('status') status?: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.svc.getCoordinatorReservations(
+      status,
+      +page,
+      +limit,
+      search,
+    );
   }
 
   @Get('coordinator/stats')
@@ -181,8 +186,18 @@ export class RequestsController {
   @Get('volunteer/available-requests')
   @UseGuards(VolunteerGuard)
   @ApiBearerAuth()
-  getAvailableRequests() {
-    return this.svc.getAvailableRequests();
+  getAvailableRequests(
+    @Req() request: AuthenticatedRequest,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.svc.getAvailableRequests(
+      request.user.sub,
+      +page,
+      +limit,
+      search,
+    );
   }
 
   @Post('volunteer/requests/:requestId/reservations')
@@ -196,11 +211,48 @@ export class RequestsController {
     return this.svc.createReservation(requestId, request.user.sub, dto);
   }
 
+  @Post('volunteer/requests/:requestId/claim')
+  @UseGuards(VolunteerGuard)
+  @ApiBearerAuth()
+  claimAccompanimentRequest(
+    @Req() request: AuthenticatedRequest,
+    @Param('requestId', ParseIntPipe) requestId: number,
+  ) {
+    return this.svc.claimAccompanimentRequest(requestId, request.user.sub);
+  }
+
+  @Get('volunteer/my-accompaniment-requests')
+  @UseGuards(VolunteerGuard)
+  @ApiBearerAuth()
+  getMyAccompanimentRequests(
+    @Req() request: AuthenticatedRequest,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.svc.getMyAccompanimentRequests(
+      request.user.sub,
+      +page,
+      +limit,
+      search,
+    );
+  }
+
   @Get('volunteer/my-reservations')
   @UseGuards(VolunteerGuard)
   @ApiBearerAuth()
-  getMyReservations(@Req() request: AuthenticatedRequest) {
-    return this.svc.getMyReservations(request.user.sub);
+  getMyReservations(
+    @Req() request: AuthenticatedRequest,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.svc.getMyReservations(
+      request.user.sub,
+      +page,
+      +limit,
+      search,
+    );
   }
 
   @Patch('volunteer/reservations/:id/done')

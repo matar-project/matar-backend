@@ -12,6 +12,8 @@ model User {
   createdRequests Request[]        @relation("CreatedRequests")
   coordinatedRequests Request[]    @relation("CoordinatedRequests")
   pageReservations PageReservation[] @relation("VolunteerReservations")
+  requestVolunteerAssignments RequestVolunteerAssignment[] @relation("RequestVolunteerAssignments")
+  opportunityParticipations OpportunityParticipation[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 

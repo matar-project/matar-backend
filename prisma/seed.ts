@@ -18,6 +18,7 @@ async function main() {
     process.env.COORDINATOR_EMAIL ?? 'coordinator@matar.org';
   const COORDINATOR_PASSWORD = process.env.COORDINATOR_PASSWORD ?? '12345678';
   const COORDINATOR_NAME = process.env.COORDINATOR_NAME ?? 'منسق النظام';
+  const COORDINATOR_PHONE = process.env.COORDINATOR_PHONE;
 
   const adminRole = await prisma.role.upsert({
     where: { name: 'admin' },
@@ -50,10 +51,14 @@ async function main() {
 
   const coordinator = await prisma.user.upsert({
     where: { email: COORDINATOR_EMAIL },
-    update: { roleId: coordinatorRole.id },
+    update: {
+      roleId: coordinatorRole.id,
+      ...(COORDINATOR_PHONE ? { phone: COORDINATOR_PHONE } : {}),
+    },
     create: {
       name: COORDINATOR_NAME,
       email: COORDINATOR_EMAIL,
+      phone: COORDINATOR_PHONE,
       passwordHash: coordinatorPasswordHash,
       roleId: coordinatorRole.id,
     },

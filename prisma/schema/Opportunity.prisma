@@ -12,6 +12,19 @@ model Opportunity {
   totalPages     Int?
   remainingPages Int?
   status         OpportunityStatus @default(AVAILABLE)
+  participants   OpportunityParticipation[]
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+}
+
+model OpportunityParticipation {
+  id            Int         @id @default(autoincrement())
+  opportunityId Int
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  volunteerId   Int
+  volunteer     User        @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+
+  @@unique([opportunityId, volunteerId])
+  @@index([volunteerId])
 }

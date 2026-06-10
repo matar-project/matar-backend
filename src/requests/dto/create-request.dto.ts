@@ -1,6 +1,7 @@
 import {
   IsIn,
   IsInt,
+  IsOptional,
   IsString,
   MaxLength,
   Min,
@@ -17,11 +18,19 @@ export class CreateRequestDto {
   @IsIn(REQUEST_TYPES)
   requestType!: (typeof REQUEST_TYPES)[number];
 
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(200)
-  title!: string;
+  title?: string;
+
+  @ApiPropertyOptional()
+  @ValidateIf((dto: CreateRequestDto) => dto.requestType !== 'ACCOMPANIMENT')
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  bookName?: string;
 
   @ApiProperty()
   @IsString()

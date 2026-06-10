@@ -5,11 +5,6 @@ export class CreateReservationDto {
   @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  startPage!: number;
-
-  @ApiProperty({ minimum: 1 })
-  @IsInt()
-  @Min(1)
   endPage!: number;
 }
 

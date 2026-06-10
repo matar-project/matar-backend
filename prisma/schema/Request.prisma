@@ -1,22 +1,14 @@
 enum RequestType {
-  BOOK_CONVERSION
-  AUDIO_RECORDING
   PDF_TO_WORD
   PDF_TO_AUDIO
-  EDUCATIONAL_SUPPORT
   ACCOMPANIMENT
-  OTHER
 }
 
 enum RequestStatus {
-  NEW
   PENDING_COORDINATOR
   COORDINATOR_ACCEPTED
   COORDINATOR_REJECTED
-  IN_PROGRESS
   DONE
-  REJECTED
-  COMPLETED
 }
 
 model Request {
@@ -30,6 +22,9 @@ model Request {
   createdByUser    User?             @relation("CreatedRequests", fields: [createdByUserId], references: [id])
   requestType      RequestType
   title            String?
+  bookName         String?
+  conversionBookId Int?
+  conversionBook   ConversionBook?   @relation(fields: [conversionBookId], references: [id], onDelete: SetNull)
   details          String
   pdfFileUrl       String?
   pdfOriginalName  String?
@@ -37,19 +32,51 @@ model Request {
   pdfMimeType      String?
   pdfFileSize      Int?
   totalPages       Int?
-  status           RequestStatus     @default(NEW)
+  status           RequestStatus     @default(PENDING_COORDINATOR)
   notes            String?
   coordinatorId    Int?
   coordinator      User?             @relation("CoordinatedRequests", fields: [coordinatorId], references: [id])
   coordinatorNotes String?
   reservations     PageReservation[]
+  volunteerAssignment RequestVolunteerAssignment?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
   @@index([createdByUserId])
   @@index([coordinatorId])
+  @@index([conversionBookId])
   @@index([status])
   @@unique([pdfStoredName])
+}
+
+model ConversionBook {
+  id               Int       @id @default(autoincrement())
+  name             String
+  normalizedName   String    @unique
+  wordCompleted    Boolean   @default(false)
+  audioCompleted   Boolean   @default(false)
+  wordCompletedAt  DateTime?
+  audioCompletedAt DateTime?
+  requests         Request[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([wordCompleted])
+  @@index([audioCompleted])
+}
+
+model RequestVolunteerAssignment {
+  id          Int               @id @default(autoincrement())
+  requestId   Int               @unique
+  request     Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  volunteerId Int
+  volunteer   User              @relation("RequestVolunteerAssignments", fields: [volunteerId], references: [id])
+  status      ReservationStatus @default(IN_PROGRESS)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([volunteerId])
+  @@index([status])
 }
 
 enum ReservationStatus {
@@ -78,23 +105,4 @@ model PageReservation {
   @@index([requestId])
   @@index([volunteerId])
   @@index([status])
-}
-
-model BookRequest {
-  id           Int           @id @default(autoincrement())
-  fullName     String
-  phone        String
-  email        String?
-  city         String
-  bookTitle    String
-  author       String?
-  subject      String
-  country      String?
-  curriculum   String?
-  academicYear String?
-  notes        String?
-  status       RequestStatus @default(NEW)
-  adminNotes   String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
 }
