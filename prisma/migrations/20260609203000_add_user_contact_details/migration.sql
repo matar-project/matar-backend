@@ -1,0 +1,4 @@
+ALTER TABLE "User"
+ADD COLUMN "phone" TEXT,
+ADD COLUMN "country" TEXT,
+ADD COLUMN "city" TEXT;

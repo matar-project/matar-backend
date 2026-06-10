@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { VolunteersService } from './volunteers.service';
 import { CreateVolunteerDto } from './dto/create-volunteer.dto';
 import { AdminGuard } from '../common/guards/admin.guard';
+import { VolunteerGuard } from '../common/guards/volunteer.guard';
 
 @ApiTags('volunteers')
 @Controller('volunteers')
@@ -10,8 +11,10 @@ export class VolunteersController {
   constructor(private readonly svc: VolunteersService) {}
 
   @Post()
-  create(@Body() dto: CreateVolunteerDto) {
-    return this.svc.create(dto);
+  @UseGuards(VolunteerGuard)
+  @ApiBearerAuth()
+  create(@Request() request: any, @Body() dto: CreateVolunteerDto) {
+    return this.svc.create(request.user.sub, dto);
   }
 
   @Get()

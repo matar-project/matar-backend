@@ -59,6 +59,9 @@ export class AuthService implements OnModuleInit {
       data: {
         name: signupDto.name.trim(),
         email: signupDto.email,
+        phone: signupDto.phone,
+        country: signupDto.country,
+        city: signupDto.city.trim(),
         passwordHash,
         roleId: role.id,
       },
@@ -136,10 +139,32 @@ export class AuthService implements OnModuleInit {
     return this.createSession(storedToken.user);
   }
 
+  async logout(refreshToken?: string) {
+    if (!refreshToken) return;
+
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        tokenHash: this.hashToken(refreshToken),
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  getRefreshTokenTtlMs() {
+    return this.getNumberConfig(
+      'JWT_REFRESH_TTL_SECONDS',
+      7 * 24 * 60 * 60,
+    ) * 1000;
+  }
+
   private async createSession(user: {
     id: number;
     name: string;
     email: string;
+    phone: string | null;
+    country: string | null;
+    city: string | null;
     role: { name: string };
   }) {
     const accessTtl = this.getNumberConfig('JWT_ACCESS_TTL_SECONDS', 15 * 60);
@@ -156,7 +181,7 @@ export class AuthService implements OnModuleInit {
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(
-        { ...payload, type: 'access' },
+        { ...payload, type: 'access', jti: randomUUID() },
         {
           secret: this.getRequiredConfig('JWT_ACCESS_SECRET'),
           expiresIn: accessTtl,
@@ -184,6 +209,9 @@ export class AuthService implements OnModuleInit {
         id: user.id,
         name: user.name,
         email: user.email,
+        phone: user.phone,
+        country: user.country,
+        city: user.city,
         role: user.role.name,
       },
       accessToken,

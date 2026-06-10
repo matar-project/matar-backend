@@ -17,6 +17,7 @@ model Request {
   fullName    String
   phone       String
   email       String?
+  country     String?
   city        String
   requestType RequestType
   details     String

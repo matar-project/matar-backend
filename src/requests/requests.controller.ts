@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { RequestsService } from './requests.service';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { CreateBookRequestDto } from './dto/create-book-request.dto';
 import { UpdateRequestDto } from './dto/update-request.dto';
 import { AdminGuard } from '../common/guards/admin.guard';
+import { VisuallyImpairedGuard } from '../common/guards/visually-impaired.guard';
 
 @ApiTags('requests')
 @Controller()
@@ -12,13 +13,17 @@ export class RequestsController {
   constructor(private readonly svc: RequestsService) {}
 
   @Post('requests')
-  createRequest(@Body() dto: CreateRequestDto) {
-    return this.svc.createRequest(dto);
+  @UseGuards(VisuallyImpairedGuard)
+  @ApiBearerAuth()
+  createRequest(@Req() request: any, @Body() dto: CreateRequestDto) {
+    return this.svc.createRequest(request.user.sub, dto);
   }
 
   @Post('book-requests')
-  createBookRequest(@Body() dto: CreateBookRequestDto) {
-    return this.svc.createBookRequest(dto);
+  @UseGuards(VisuallyImpairedGuard)
+  @ApiBearerAuth()
+  createBookRequest(@Req() request: any, @Body() dto: CreateBookRequestDto) {
+    return this.svc.createBookRequest(request.user.sub, dto);
   }
 
   @Get('admin/requests')

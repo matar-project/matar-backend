@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { LibraryService } from './library.service';
 import { CreateLibraryItemDto } from './dto/create-library-item.dto';
 import { AdminGuard } from '../common/guards/admin.guard';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @ApiTags('library')
 @Controller('library')
@@ -10,6 +11,8 @@ export class LibraryController {
   constructor(private readonly svc: LibraryService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   findAll(
     @Query('search') search?: string,
     @Query('author') author?: string,
@@ -30,6 +33,8 @@ export class LibraryController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.svc.findOne(id);
   }

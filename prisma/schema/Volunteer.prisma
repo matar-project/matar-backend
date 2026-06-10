@@ -3,6 +3,7 @@ model Volunteer {
   name             String
   phone            String
   email            String?
+  country          String?
   city             String
   interests        String[]
   preferredContact String
