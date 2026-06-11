@@ -64,6 +64,17 @@ export class RequestsController {
     return this.svc.createRequest(request.user.sub, dto, file);
   }
 
+  @Get('requests/my')
+  @UseGuards(VisuallyImpairedGuard)
+  @ApiBearerAuth()
+  getMyRequests(
+    @Req() request: AuthenticatedRequest,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+  ) {
+    return this.svc.getMyRequests(request.user.sub, +page, +limit);
+  }
+
   @Get('requests/:id/pdf')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

@@ -769,6 +769,30 @@ export class RequestsService {
     });
   }
 
+  async getMyRequests(userId: number, page = 1, limit = 10) {
+    const paging = pagination(page, limit);
+    const where: Prisma.RequestWhereInput = { createdByUserId: userId };
+    const [data, total] = await Promise.all([
+      this.prisma.request.findMany({
+        where,
+        skip: paging.skip,
+        take: paging.limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          requestType: true,
+          bookName: true,
+          details: true,
+          status: true,
+          coordinatorNotes: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.request.count({ where }),
+    ]);
+    return paginated(data, total, paging.page, paging.limit);
+  }
+
   async getStats() {
     this.logger.log('Fetching dashboard stats');
     const [
