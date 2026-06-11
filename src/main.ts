@@ -12,7 +12,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: [
-    'https://lighthearted-sorbet-c2c522.netlify.app',
+    'https://matarproject.netlify.app',
     'http://localhost:5173',
   ],
     credentials: true,
