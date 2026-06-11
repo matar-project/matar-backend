@@ -11,7 +11,10 @@ async function bootstrap() {
   app.use(cookieParser());
 
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: [
+    'https://lighthearted-sorbet-c2c522.netlify.app',
+    'http://localhost:5173',
+  ],
     credentials: true,
   });
 
