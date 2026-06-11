@@ -37,6 +37,10 @@ model Request {
   coordinatorId    Int?
   coordinator      User?             @relation("CoordinatedRequests", fields: [coordinatorId], references: [id])
   coordinatorNotes String?
+  outputOriginalName String?
+  outputStoredName   String?
+  outputMimeType     String?
+  outputFileSize     Int?
   reservations     PageReservation[]
   volunteerAssignment RequestVolunteerAssignment?
   createdAt        DateTime          @default(now())

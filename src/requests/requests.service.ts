@@ -20,6 +20,7 @@ import {
   RequestType,
   ReservationStatus,
 } from '../generated/prisma/client';
+import { REQUEST_OUTPUT_DIRECTORY } from './request-output-upload.config';
 import { REQUEST_PDF_DIRECTORY } from './request-upload.config';
 import { paginated, pagination } from '../common/pagination';
 
@@ -767,6 +768,102 @@ export class RequestsService {
         rejectionReason: reason?.trim() || null,
       },
     });
+  }
+
+  async getMyRequests(userId: number, page = 1, limit = 10) {
+    const paging = pagination(page, limit);
+    const where: Prisma.RequestWhereInput = { createdByUserId: userId };
+    const [data, total] = await Promise.all([
+      this.prisma.request.findMany({
+        where,
+        skip: paging.skip,
+        take: paging.limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          requestType: true,
+          bookName: true,
+          details: true,
+          status: true,
+          coordinatorNotes: true,
+          outputOriginalName: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.request.count({ where }),
+    ]);
+    return paginated(data, total, paging.page, paging.limit);
+  }
+
+  async uploadOutputFile(
+    requestId: number,
+    coordinatorId: number,
+    file: Express.Multer.File,
+  ) {
+    const request = await this.prisma.request.findUnique({
+      where: { id: requestId },
+    });
+    if (!request) {
+      await unlink(file.path).catch(() => undefined);
+      throw new NotFoundException('Request not found');
+    }
+    if (request.status !== RequestStatus.DONE) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException(
+        'Output files can only be uploaded for completed requests',
+      );
+    }
+
+    if (request.outputStoredName) {
+      const oldPath = join(
+        REQUEST_OUTPUT_DIRECTORY,
+        basename(request.outputStoredName),
+      );
+      await unlink(oldPath).catch(() => undefined);
+    }
+
+    return this.prisma.request.update({
+      where: { id: requestId },
+      data: {
+        outputOriginalName: this.normalizeOriginalFileName(file.originalname),
+        outputStoredName: file.filename,
+        outputMimeType: file.mimetype,
+        outputFileSize: file.size,
+      },
+    });
+  }
+
+  async downloadOutputFile(
+    requestId: number,
+    user: { sub: number; role: string },
+  ) {
+    const request = await this.prisma.request.findUnique({
+      where: { id: requestId },
+      select: {
+        createdByUserId: true,
+        outputOriginalName: true,
+        outputStoredName: true,
+      },
+    });
+
+    if (!request) throw new NotFoundException('Request not found');
+
+    const isOwner =
+      user.role === 'visually_impired' && request.createdByUserId === user.sub;
+    const isCoordinator = user.role === 'coordinator';
+
+    if (!isOwner && !isCoordinator) {
+      throw new ForbiddenException('You do not have access to this file');
+    }
+    if (!request.outputStoredName || !request.outputOriginalName) {
+      throw new NotFoundException('Output file not found');
+    }
+
+    const storedName = basename(request.outputStoredName);
+    const path = join(REQUEST_OUTPUT_DIRECTORY, storedName);
+    if (!existsSync(path)) throw new NotFoundException('Output file not found');
+
+    return { path, originalName: request.outputOriginalName };
   }
 
   async getStats() {

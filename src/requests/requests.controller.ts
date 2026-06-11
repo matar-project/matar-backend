@@ -33,6 +33,7 @@ import {
   RejectReservationDto,
 } from './dto/reservation.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { requestOutputUploadOptions } from './request-output-upload.config';
 import { requestPdfUploadOptions } from './request-upload.config';
 import { UploadedFileCleanupInterceptor } from './uploaded-file-cleanup.interceptor';
 
@@ -62,6 +63,17 @@ export class RequestsController {
     @UploadedFile() file?: Express.Multer.File,
   ) {
     return this.svc.createRequest(request.user.sub, dto, file);
+  }
+
+  @Get('requests/my')
+  @UseGuards(VisuallyImpairedGuard)
+  @ApiBearerAuth()
+  getMyRequests(
+    @Req() request: AuthenticatedRequest,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+  ) {
+    return this.svc.getMyRequests(request.user.sub, +page, +limit);
   }
 
   @Get('requests/:id/pdf')
@@ -274,6 +286,34 @@ export class RequestsController {
     @Body() dto: RejectReservationDto,
   ) {
     return this.svc.rejectReservation(id, request.user.sub, dto.reason);
+  }
+
+  @Post('coordinator/requests/:id/output')
+  @UseGuards(CoordinatorGuard)
+  @UseInterceptors(
+    FileInterceptor('outputFile', requestOutputUploadOptions),
+    UploadedFileCleanupInterceptor,
+  )
+  @ApiBearerAuth()
+  @ApiConsumes('multipart/form-data')
+  uploadOutputFile(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.svc.uploadOutputFile(id, request.user.sub, file);
+  }
+
+  @Get('requests/:id/output')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async downloadOutputFile(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() response: Response,
+  ) {
+    const file = await this.svc.downloadOutputFile(id, request.user);
+    response.download(file.path, file.originalName);
   }
 
   @Get('stats')
