@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { LibraryService } from './library.service';
 import { CreateLibraryItemDto } from './dto/create-library-item.dto';
@@ -45,6 +46,17 @@ export class LibraryController {
     @Query('search') search?: string,
   ) {
     return this.svc.findAllAdmin(+page, +limit, search);
+  }
+
+  @Get(':id/download')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async download(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() response: Response,
+  ) {
+    const file = await this.svc.getDownload(id);
+    response.download(file.path, file.originalName);
   }
 
   @Get(':id')

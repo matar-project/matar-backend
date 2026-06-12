@@ -19,6 +19,8 @@ model LibraryItem {
   fileName    String
   fileSize    Int?
   published   Boolean         @default(true)
+  sourceRequestId Int?        @unique
+  sourceRequest   Request?    @relation(fields: [sourceRequestId], references: [id], onDelete: SetNull)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 }

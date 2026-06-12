@@ -1,7 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { existsSync } from 'fs';
+import { basename, join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLibraryItemDto } from './dto/create-library-item.dto';
 import { paginated, pagination } from '../common/pagination';
+import { REQUEST_OUTPUT_DIRECTORY } from '../requests/request-output-upload.config';
 
 @Injectable()
 export class LibraryService {
@@ -129,5 +132,33 @@ export class LibraryService {
     ]);
     this.logger.log(`Admin library items fetched: total=${total}`);
     return paginated(data, total, paging.page, paging.limit);
+  }
+
+  async getDownload(id: number) {
+    const item = await this.prisma.libraryItem.findUnique({
+      where: { id },
+      include: {
+        sourceRequest: {
+          select: {
+            outputOriginalName: true,
+            outputStoredName: true,
+          },
+        },
+      },
+    });
+    if (!item?.published) throw new NotFoundException('Library item not found');
+    if (
+      !item.sourceRequest?.outputStoredName ||
+      !item.sourceRequest.outputOriginalName
+    ) {
+      throw new NotFoundException('Library file not found');
+    }
+
+    const path = join(
+      REQUEST_OUTPUT_DIRECTORY,
+      basename(item.sourceRequest.outputStoredName),
+    );
+    if (!existsSync(path)) throw new NotFoundException('Library file not found');
+    return { path, originalName: item.sourceRequest.outputOriginalName };
   }
 }
