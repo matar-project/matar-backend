@@ -5,7 +5,7 @@ export class CreateReservationDto {
   @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  endPage!: number;
+  pageCount!: number;
 }
 
 export class RejectReservationDto {
