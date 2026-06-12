@@ -7,8 +7,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { existsSync } from 'fs';
-import { open, unlink } from 'fs/promises';
-import { basename, join } from 'path';
+import { open, stat, unlink } from 'fs/promises';
+import { basename, extname, join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { UpdateRequestDto } from './dto/update-request.dto';
@@ -16,6 +16,7 @@ import { CreateReservationDto } from './dto/reservation.dto';
 import { UpdateCoordinatorRequestDto } from './dto/coordinator-action.dto';
 import {
   Prisma,
+  LibraryItemType,
   RequestStatus,
   RequestType,
   ReservationStatus,
@@ -23,6 +24,10 @@ import {
 import { REQUEST_OUTPUT_DIRECTORY } from './request-output-upload.config';
 import { REQUEST_PDF_DIRECTORY } from './request-upload.config';
 import { paginated, pagination } from '../common/pagination';
+import {
+  RESERVATION_OUTPUT_DIRECTORY,
+} from './reservation-output-upload.config';
+import { DocxMergeService } from './docx-merge.service';
 
 const COORDINATOR_STATUSES: RequestStatus[] = [
   RequestStatus.PENDING_COORDINATOR,
@@ -30,6 +35,16 @@ const COORDINATOR_STATUSES: RequestStatus[] = [
   RequestStatus.COORDINATOR_REJECTED,
   RequestStatus.DONE,
 ];
+
+const COORDINATOR_DERIVED_STATUSES = [
+  'IN_PROGRESS',
+  'AWAITING_COMPLETION_APPROVAL',
+] as const;
+
+type CoordinatorRequestFilter =
+  | RequestStatus
+  | 'ALL'
+  | (typeof COORDINATOR_DERIVED_STATUSES)[number];
 
 const RESERVABLE_TYPES: RequestType[] = [
   RequestType.PDF_TO_WORD,
@@ -55,7 +70,10 @@ type ReservationWithRelations = Prisma.PageReservationGetPayload<{
 export class RequestsService {
   private readonly logger = new Logger(RequestsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly docxMergeService: DocxMergeService,
+  ) {}
 
   async createRequest(
     userId: number,
@@ -191,15 +209,22 @@ export class RequestsService {
   ) {
     const parsedStatus = this.parseRequestStatus(status);
     const paging = pagination(page, limit);
+    const derivedStatus = COORDINATOR_DERIVED_STATUSES.includes(
+      parsedStatus as (typeof COORDINATOR_DERIVED_STATUSES)[number],
+    );
     const where: Prisma.RequestWhereInput = {
-        status: parsedStatus ? parsedStatus : { in: COORDINATOR_STATUSES },
-        ...this.requestSearchWhere(search),
-      };
-    const [requests, total] = await Promise.all([
-      this.prisma.request.findMany({
+      status: derivedStatus
+        ? RequestStatus.COORDINATOR_ACCEPTED
+        : parsedStatus
+          ? (parsedStatus as RequestStatus)
+          : { in: COORDINATOR_STATUSES },
+      ...this.requestSearchWhere(search),
+    };
+    const requests = await this.prisma.request.findMany({
       where,
-      skip: paging.skip,
-      take: paging.limit,
+      ...(derivedStatus
+        ? {}
+        : { skip: paging.skip, take: paging.limit }),
       include: {
         createdByUser: {
           select: {
@@ -218,7 +243,12 @@ export class RequestsService {
         conversionBook: true,
         reservations: {
           where: { status: { not: ReservationStatus.REJECTED } },
-          select: { startPage: true, endPage: true, status: true },
+          select: {
+            startPage: true,
+            endPage: true,
+            status: true,
+            outputStoredName: true,
+          },
           orderBy: { startPage: 'asc' },
         },
         volunteerAssignment: {
@@ -230,17 +260,30 @@ export class RequestsService {
         },
       },
       orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.request.count({ where }),
-    ]);
+    });
 
-    const data = requests.map((request) => ({
+    const requestsWithProgress = requests.map((request) => ({
       ...request,
       conversionProgress: this.getConversionProgress(
         request.totalPages,
         request.reservations,
+        request.requestType === RequestType.PDF_TO_WORD,
       ),
     }));
+    const filteredRequests = derivedStatus
+      ? requestsWithProgress.filter((request) =>
+          parsedStatus === 'AWAITING_COMPLETION_APPROVAL'
+            ? request.conversionProgress.canApproveCompletion
+            : !request.conversionProgress.canApproveCompletion,
+        )
+      : requestsWithProgress;
+    const total = derivedStatus
+      ? filteredRequests.length
+      : await this.prisma.request.count({ where });
+    const data = derivedStatus
+      ? filteredRequests.slice(paging.skip, paging.skip + paging.limit)
+      : filteredRequests;
+
     return paginated(data, total, paging.page, paging.limit);
   }
 
@@ -296,7 +339,12 @@ export class RequestsService {
         conversionBook: true,
         reservations: {
           where: { status: { not: ReservationStatus.REJECTED } },
-          select: { startPage: true, endPage: true, status: true },
+          select: {
+            startPage: true,
+            endPage: true,
+            status: true,
+            outputStoredName: true,
+          },
           orderBy: { startPage: 'asc' },
         },
       },
@@ -314,15 +362,23 @@ export class RequestsService {
     if (!request.conversionBook) {
       throw new BadRequestException('This request is not linked to a book');
     }
+    const conversionBook = request.conversionBook;
 
     const progress = this.getConversionProgress(
       request.totalPages,
       request.reservations,
+      request.requestType === RequestType.PDF_TO_WORD,
     );
     if (!progress.canApproveCompletion) {
       throw new BadRequestException(
-        'All pages must be completed before coordinator approval',
+        'All pages and required output files must be completed before coordinator approval',
       );
+    }
+    if (
+      request.requestType === RequestType.PDF_TO_WORD &&
+      !request.outputStoredName
+    ) {
+      throw new BadRequestException('The combined Word file is not ready');
     }
 
     const completedAt = new Date();
@@ -335,7 +391,7 @@ export class RequestsService {
             : { audioCompleted: true, audioCompletedAt: completedAt },
       });
 
-      return tx.request.update({
+      const completedRequest = await tx.request.update({
         where: { id },
         data: {
           status: RequestStatus.DONE,
@@ -343,6 +399,44 @@ export class RequestsService {
         },
         include: { conversionBook: true },
       });
+
+      if (
+        request.requestType === RequestType.PDF_TO_WORD &&
+        request.outputStoredName &&
+        request.outputOriginalName
+      ) {
+        await tx.libraryItem.upsert({
+          where: { sourceRequestId: request.id },
+          create: {
+            title:
+              request.bookName ??
+              request.title ??
+              conversionBook.name,
+            description: request.details,
+            country: request.country,
+            itemType: LibraryItemType.WORD_DOC,
+            fileUrl: `/api/library/request/${request.id}/download`,
+            fileName: request.outputOriginalName,
+            fileSize: request.outputFileSize,
+            sourceRequestId: request.id,
+          },
+          update: {
+            title:
+              request.bookName ??
+              request.title ??
+              conversionBook.name,
+            description: request.details,
+            country: request.country,
+            itemType: LibraryItemType.WORD_DOC,
+            fileUrl: `/api/library/request/${request.id}/download`,
+            fileName: request.outputOriginalName,
+            fileSize: request.outputFileSize,
+            published: true,
+          },
+        });
+      }
+
+      return completedRequest;
     });
   }
 
@@ -520,6 +614,86 @@ export class RequestsService {
       })),
     }));
     return paginated(data, total, paging.page, paging.limit);
+  }
+
+  async getVolunteerDashboard(volunteerId: number) {
+    const now = new Date();
+    const [acceptedRequests, activeReservations, completedReservations] =
+      await Promise.all([
+        this.prisma.request.findMany({
+          where: { status: RequestStatus.COORDINATOR_ACCEPTED },
+          include: {
+            reservations: {
+              where: { status: { not: ReservationStatus.REJECTED } },
+              select: {
+                volunteerId: true,
+                startPage: true,
+                endPage: true,
+                status: true,
+              },
+            },
+            volunteerAssignment: { select: { volunteerId: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.pageReservation.count({
+          where: {
+            volunteerId,
+            status: ReservationStatus.IN_PROGRESS,
+            deadlineAt: { gte: now },
+          },
+        }),
+        this.prisma.pageReservation.count({
+          where: { volunteerId, status: ReservationStatus.DONE },
+        }),
+      ]);
+
+    const availableRequests = acceptedRequests.filter((request) => {
+      if (request.requestType === RequestType.ACCOMPANIMENT) {
+        return !request.volunteerAssignment;
+      }
+      if (!request.totalPages) return false;
+      const hasActiveReservation = request.reservations.some(
+        (reservation) =>
+          reservation.volunteerId === volunteerId &&
+          reservation.status === ReservationStatus.IN_PROGRESS,
+      );
+      return (
+        !hasActiveReservation &&
+        this.getNextAvailablePage(request.reservations) <= request.totalPages
+      );
+    });
+
+    const [activeAccompaniment, completedAccompaniment] = await Promise.all([
+      this.prisma.requestVolunteerAssignment.count({
+        where: { volunteerId, status: ReservationStatus.IN_PROGRESS },
+      }),
+      this.prisma.requestVolunteerAssignment.count({
+        where: { volunteerId, status: ReservationStatus.DONE },
+      }),
+    ]);
+
+    return {
+      available: availableRequests.length,
+      inProgress: activeReservations + activeAccompaniment,
+      completed: completedReservations + completedAccompaniment,
+      recentAvailable: availableRequests.slice(0, 5).map((request) => ({
+        id: request.id,
+        title:
+          request.bookName ??
+          request.title ??
+          (request.requestType === RequestType.ACCOMPANIMENT
+            ? 'طلب مرافقة'
+            : 'طلب تحويل كتاب'),
+        requestType: request.requestType,
+        details: request.details,
+        totalPages: request.totalPages,
+        nextAvailablePage:
+          request.requestType === RequestType.ACCOMPANIMENT
+            ? null
+            : this.getNextAvailablePage(request.reservations),
+      })),
+    };
   }
 
   async claimAccompanimentRequest(requestId: number, volunteerId: number) {
@@ -744,6 +918,15 @@ export class RequestsService {
       id,
       volunteerId,
     );
+    const request = await this.prisma.request.findUnique({
+      where: { id: reservation.requestId },
+      select: { requestType: true },
+    });
+    if (request?.requestType === RequestType.PDF_TO_WORD) {
+      throw new BadRequestException(
+        'A Word .docx file is required to complete this reservation',
+      );
+    }
     if (this.getEffectiveStatus(reservation) === ReservationStatus.LATE) {
       throw new BadRequestException(
         'Late reservations cannot be marked as done',
@@ -756,6 +939,141 @@ export class RequestsService {
         completedAt: new Date(),
       },
     });
+  }
+
+  async completeWordReservation(
+    id: number,
+    volunteerId: number,
+    file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('A Word .docx file is required');
+    }
+
+    await this.docxMergeService.validate(file.path);
+    const reservation = await this.requireOwnedActiveReservation(
+      id,
+      volunteerId,
+    );
+    if (this.getEffectiveStatus(reservation) === ReservationStatus.LATE) {
+      throw new BadRequestException(
+        'Late reservations cannot be marked as done',
+      );
+    }
+
+    const request = await this.prisma.request.findUnique({
+      where: { id: reservation.requestId },
+      include: {
+        reservations: {
+          where: { status: { not: ReservationStatus.REJECTED } },
+          select: {
+            id: true,
+            startPage: true,
+            endPage: true,
+            status: true,
+            outputStoredName: true,
+          },
+          orderBy: { startPage: 'asc' },
+        },
+      },
+    });
+    if (!request) throw new NotFoundException('Request not found');
+    if (request.requestType !== RequestType.PDF_TO_WORD) {
+      throw new BadRequestException(
+        'Word files are only accepted for PDF to Word reservations',
+      );
+    }
+
+    const candidateReservations = request.reservations.map((item) =>
+      item.id === reservation.id
+        ? {
+            ...item,
+            status: ReservationStatus.DONE,
+            outputStoredName: file.filename,
+          }
+        : item,
+    );
+    const progress = this.getConversionProgress(
+      request.totalPages,
+      candidateReservations,
+      true,
+    );
+
+    let mergedOutput:
+      | { outputPath: string; outputStoredName: string }
+      | undefined;
+    if (progress.canApproveCompletion) {
+      mergedOutput = await this.docxMergeService.merge(
+        candidateReservations
+          .filter(
+            (item) =>
+              item.status === ReservationStatus.DONE &&
+              item.outputStoredName,
+          )
+          .map((item) => ({
+            startPage: item.startPage,
+            path:
+              item.id === reservation.id
+                ? file.path
+                : join(
+                    RESERVATION_OUTPUT_DIRECTORY,
+                    basename(item.outputStoredName!),
+                  ),
+          })),
+      );
+    }
+
+    const oldOutputPath = request.outputStoredName
+      ? join(REQUEST_OUTPUT_DIRECTORY, basename(request.outputStoredName))
+      : null;
+
+    try {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const completedReservation = await tx.pageReservation.update({
+          where: { id },
+          data: {
+            status: ReservationStatus.DONE,
+            completedAt: new Date(),
+            outputOriginalName: this.normalizeOriginalFileName(
+              file.originalname,
+            ),
+            outputStoredName: file.filename,
+            outputMimeType: file.mimetype,
+            outputFileSize: file.size,
+          },
+          include: this.reservationRelations(),
+        });
+
+        if (mergedOutput) {
+          const outputName = `${request.bookName ?? request.title ?? `request-${request.id}`}-complete.docx`;
+          await tx.request.update({
+            where: { id: request.id },
+            data: {
+              outputOriginalName: outputName,
+              outputStoredName: mergedOutput.outputStoredName,
+              outputMimeType:
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              outputFileSize: (await stat(mergedOutput.outputPath)).size,
+            },
+          });
+        }
+
+        return completedReservation;
+      });
+
+      if (mergedOutput && oldOutputPath) {
+        await unlink(oldOutputPath).catch(() => undefined);
+      }
+      if (!mergedOutput) {
+        await this.assembleCompletedWordRequest(request.id);
+      }
+      return this.withEffectiveStatus(updated);
+    } catch (error) {
+      if (mergedOutput) {
+        await unlink(mergedOutput.outputPath).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   async rejectReservation(id: number, volunteerId: number, reason?: string) {
@@ -797,40 +1115,92 @@ export class RequestsService {
 
   async uploadOutputFile(
     requestId: number,
-    coordinatorId: number,
+    _coordinatorId: number,
     file: Express.Multer.File,
   ) {
     const request = await this.prisma.request.findUnique({
       where: { id: requestId },
+      include: {
+        reservations: {
+          where: { status: { not: ReservationStatus.REJECTED } },
+          select: {
+            startPage: true,
+            endPage: true,
+            status: true,
+            outputStoredName: true,
+          },
+          orderBy: { startPage: 'asc' },
+        },
+      },
     });
     if (!request) {
       await unlink(file.path).catch(() => undefined);
       throw new NotFoundException('Request not found');
     }
-    if (request.status !== RequestStatus.DONE) {
+    const canReplaceBeforeApproval =
+      request.status === RequestStatus.COORDINATOR_ACCEPTED &&
+      request.requestType === RequestType.PDF_TO_WORD &&
+      this.getConversionProgress(
+        request.totalPages,
+        request.reservations,
+        true,
+      ).canApproveCompletion;
+    if (
+      request.status !== RequestStatus.DONE &&
+      !canReplaceBeforeApproval
+    ) {
       await unlink(file.path).catch(() => undefined);
       throw new BadRequestException(
-        'Output files can only be uploaded for completed requests',
+        'The final file can only be replaced after all pages are completed',
       );
     }
+    if (
+      request.requestType === RequestType.PDF_TO_WORD &&
+      extname(file.originalname).toLowerCase() !== '.docx'
+    ) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException(
+        'The final PDF to Word file must be a .docx file',
+      );
+    }
+    if (request.requestType === RequestType.PDF_TO_WORD) {
+      await this.docxMergeService.validate(file.path);
+    }
 
-    if (request.outputStoredName) {
-      const oldPath = join(
+    const oldPath = request.outputStoredName
+      ? join(
         REQUEST_OUTPUT_DIRECTORY,
         basename(request.outputStoredName),
-      );
-      await unlink(oldPath).catch(() => undefined);
-    }
+      )
+      : null;
 
-    return this.prisma.request.update({
-      where: { id: requestId },
-      data: {
-        outputOriginalName: this.normalizeOriginalFileName(file.originalname),
-        outputStoredName: file.filename,
-        outputMimeType: file.mimetype,
-        outputFileSize: file.size,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedRequest = await tx.request.update({
+        where: { id: requestId },
+        data: {
+          outputOriginalName: this.normalizeOriginalFileName(
+            file.originalname,
+          ),
+          outputStoredName: file.filename,
+          outputMimeType: file.mimetype,
+          outputFileSize: file.size,
+        },
+      });
+
+      if (request.status === RequestStatus.DONE) {
+        await tx.libraryItem.updateMany({
+          where: { sourceRequestId: requestId },
+          data: {
+            fileName: updatedRequest.outputOriginalName!,
+            fileSize: updatedRequest.outputFileSize,
+          },
+        });
+      }
+
+      return updatedRequest;
     });
+    if (oldPath) await unlink(oldPath).catch(() => undefined);
+    return updated;
   }
 
   async downloadOutputFile(
@@ -968,12 +1338,19 @@ export class RequestsService {
     return reservation;
   }
 
-  private parseRequestStatus(status?: string) {
-    if (!status) return undefined;
-    if (!COORDINATOR_STATUSES.includes(status as RequestStatus)) {
+  private parseRequestStatus(
+    status?: string,
+  ): CoordinatorRequestFilter | undefined {
+    if (!status || status === 'ALL') return undefined;
+    if (
+      !COORDINATOR_STATUSES.includes(status as RequestStatus) &&
+      !COORDINATOR_DERIVED_STATUSES.includes(
+        status as (typeof COORDINATOR_DERIVED_STATUSES)[number],
+      )
+    ) {
       throw new BadRequestException('Invalid coordinator request status');
     }
-    return status as RequestStatus;
+    return status as CoordinatorRequestFilter;
   }
 
   private parseReservationStatus(status?: string) {
@@ -1050,16 +1427,81 @@ export class RequestsService {
     return book.id;
   }
 
+  private async assembleCompletedWordRequest(requestId: number) {
+    const request = await this.prisma.request.findUnique({
+      where: { id: requestId },
+      select: {
+        id: true,
+        title: true,
+        bookName: true,
+        totalPages: true,
+        requestType: true,
+        outputStoredName: true,
+        reservations: {
+          where: { status: { not: ReservationStatus.REJECTED } },
+          select: {
+            startPage: true,
+            endPage: true,
+            status: true,
+            outputStoredName: true,
+          },
+          orderBy: { startPage: 'asc' },
+        },
+      },
+    });
+    if (
+      !request ||
+      request.requestType !== RequestType.PDF_TO_WORD ||
+      request.outputStoredName ||
+      !this.getConversionProgress(
+        request.totalPages,
+        request.reservations,
+        true,
+      ).canApproveCompletion
+    ) {
+      return;
+    }
+
+    const mergedOutput = await this.docxMergeService.merge(
+      request.reservations.map((reservation) => ({
+        startPage: reservation.startPage,
+        path: join(
+          RESERVATION_OUTPUT_DIRECTORY,
+          basename(reservation.outputStoredName!),
+        ),
+      })),
+    );
+    const result = await this.prisma.request.updateMany({
+      where: { id: request.id, outputStoredName: null },
+      data: {
+        outputOriginalName: `${request.bookName ?? request.title ?? `request-${request.id}`}-complete.docx`,
+        outputStoredName: mergedOutput.outputStoredName,
+        outputMimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        outputFileSize: (await stat(mergedOutput.outputPath)).size,
+      },
+    });
+    if (result.count === 0) {
+      await unlink(mergedOutput.outputPath).catch(() => undefined);
+    }
+  }
+
   private getConversionProgress(
     totalPages: number | null,
     reservations: Array<{
       startPage: number;
       endPage: number;
       status: ReservationStatus;
+      outputStoredName?: string | null;
     }>,
+    requireOutputFiles = false,
   ) {
     const doneReservations = reservations
-      .filter((reservation) => reservation.status === ReservationStatus.DONE)
+      .filter(
+        (reservation) =>
+          reservation.status === ReservationStatus.DONE &&
+          (!requireOutputFiles || Boolean(reservation.outputStoredName)),
+      )
       .sort((a, b) => a.startPage - b.startPage);
     let coveredThroughPage = 0;
 

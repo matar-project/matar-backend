@@ -43,6 +43,7 @@ model Request {
   outputFileSize     Int?
   reservations     PageReservation[]
   volunteerAssignment RequestVolunteerAssignment?
+  libraryItem      LibraryItem?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -101,6 +102,10 @@ model PageReservation {
   status          ReservationStatus @default(IN_PROGRESS)
   deadlineAt      DateTime
   completedAt     DateTime?
+  outputOriginalName String?
+  outputStoredName   String?
+  outputMimeType     String?
+  outputFileSize     Int?
   rejectedAt      DateTime?
   rejectionReason String?
   createdAt       DateTime          @default(now())
@@ -109,4 +114,5 @@ model PageReservation {
   @@index([requestId])
   @@index([volunteerId])
   @@index([status])
+  @@unique([outputStoredName])
 }

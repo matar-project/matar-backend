@@ -8,6 +8,7 @@ import { VisuallyImpairedGuard } from '../common/guards/visually-impaired.guard'
 import { CoordinatorGuard } from '../common/guards/coordinator.guard';
 import { VolunteerGuard } from '../common/guards/volunteer.guard';
 import { UploadedFileCleanupInterceptor } from './uploaded-file-cleanup.interceptor';
+import { DocxMergeService } from './docx-merge.service';
 
 @Module({
   imports: [JwtModule],
@@ -20,6 +21,7 @@ import { UploadedFileCleanupInterceptor } from './uploaded-file-cleanup.intercep
     CoordinatorGuard,
     VolunteerGuard,
     UploadedFileCleanupInterceptor,
+    DocxMergeService,
   ],
 })
 export class RequestsModule {}

@@ -36,6 +36,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { requestOutputUploadOptions } from './request-output-upload.config';
 import { requestPdfUploadOptions } from './request-upload.config';
 import { UploadedFileCleanupInterceptor } from './uploaded-file-cleanup.interceptor';
+import { reservationOutputUploadOptions } from './reservation-output-upload.config';
 
 interface AuthenticatedRequest {
   user: {
@@ -275,6 +276,29 @@ export class RequestsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.svc.completeReservation(id, request.user.sub);
+  }
+
+  @Get('volunteer/dashboard')
+  @UseGuards(VolunteerGuard)
+  @ApiBearerAuth()
+  getVolunteerDashboard(@Req() request: AuthenticatedRequest) {
+    return this.svc.getVolunteerDashboard(request.user.sub);
+  }
+
+  @Post('volunteer/reservations/:id/word-output')
+  @UseGuards(VolunteerGuard)
+  @UseInterceptors(
+    FileInterceptor('outputFile', reservationOutputUploadOptions),
+    UploadedFileCleanupInterceptor,
+  )
+  @ApiBearerAuth()
+  @ApiConsumes('multipart/form-data')
+  completeWordReservation(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.svc.completeWordReservation(id, request.user.sub, file);
   }
 
   @Patch('volunteer/reservations/:id/reject')
