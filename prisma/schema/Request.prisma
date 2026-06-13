@@ -88,6 +88,7 @@ enum ReservationStatus {
   IN_PROGRESS
   DONE
   REJECTED
+  EXPIRED
   LATE
 }
 

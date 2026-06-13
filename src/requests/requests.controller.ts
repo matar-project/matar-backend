@@ -189,6 +189,16 @@ export class RequestsController {
     );
   }
 
+  @Patch('coordinator/reservations/:id/reject')
+  @UseGuards(CoordinatorGuard)
+  @ApiBearerAuth()
+  rejectVolunteerReservation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RejectReservationDto,
+  ) {
+    return this.svc.rejectVolunteerReservation(id, dto.reason);
+  }
+
   @Get('coordinator/stats')
   @UseGuards(CoordinatorGuard)
   @ApiBearerAuth()

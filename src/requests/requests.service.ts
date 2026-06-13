@@ -28,6 +28,11 @@ import {
   RESERVATION_OUTPUT_DIRECTORY,
 } from './reservation-output-upload.config';
 import { DocxMergeService } from './docx-merge.service';
+import {
+  allocateAvailablePages,
+  getAvailableRanges,
+  getNextAvailableRange,
+} from './page-allocation';
 
 const COORDINATOR_STATUSES: RequestStatus[] = [
   RequestStatus.PENDING_COORDINATOR,
@@ -49,6 +54,16 @@ type CoordinatorRequestFilter =
 const RESERVABLE_TYPES: RequestType[] = [
   RequestType.PDF_TO_WORD,
   RequestType.PDF_TO_AUDIO,
+];
+
+const RESERVATION_PAGE_INCREMENT: Partial<Record<RequestType, number>> = {
+  [RequestType.PDF_TO_WORD]: 3,
+  [RequestType.PDF_TO_AUDIO]: 10,
+};
+
+const BLOCKING_RESERVATION_STATUSES: ReservationStatus[] = [
+  ReservationStatus.IN_PROGRESS,
+  ReservationStatus.DONE,
 ];
 
 type ReservationWithRelations = Prisma.PageReservationGetPayload<{
@@ -207,6 +222,7 @@ export class RequestsService {
     limit = 10,
     search?: string,
   ) {
+    await this.expireReservations();
     const parsedStatus = this.parseRequestStatus(status);
     const paging = pagination(page, limit);
     const derivedStatus = COORDINATOR_DERIVED_STATUSES.includes(
@@ -242,7 +258,7 @@ export class RequestsService {
         _count: { select: { reservations: true } },
         conversionBook: true,
         reservations: {
-          where: { status: { not: ReservationStatus.REJECTED } },
+          where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
           select: {
             startPage: true,
             endPage: true,
@@ -333,12 +349,13 @@ export class RequestsService {
   }
 
   async approveRequestCompletion(id: number, coordinatorId: number) {
+    await this.expireReservations();
     const request = await this.prisma.request.findUnique({
       where: { id },
       include: {
         conversionBook: true,
         reservations: {
-          where: { status: { not: ReservationStatus.REJECTED } },
+          where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
           select: {
             startPage: true,
             endPage: true,
@@ -453,6 +470,7 @@ export class RequestsService {
   }
 
   async getRequestReservations(requestId: number) {
+    await this.expireReservations();
     const request = await this.prisma.request.findUnique({
       where: { id: requestId },
       select: { id: true },
@@ -475,14 +493,12 @@ export class RequestsService {
     limit = 10,
     search?: string,
   ) {
+    await this.expireReservations();
     const parsedStatus = this.parseReservationStatus(status);
     const paging = pagination(page, limit);
     const where: Prisma.PageReservationWhereInput = {
       ...(parsedStatus === ReservationStatus.LATE
-        ? {
-            status: ReservationStatus.IN_PROGRESS,
-            deadlineAt: { lt: new Date() },
-          }
+        ? { status: ReservationStatus.EXPIRED }
         : parsedStatus
           ? { status: parsedStatus }
           : {}),
@@ -506,6 +522,7 @@ export class RequestsService {
   }
 
   async getCoordinatorStats() {
+    await this.expireReservations();
     const now = new Date();
     const [
       pendingRequests,
@@ -534,10 +551,7 @@ export class RequestsService {
         where: { status: ReservationStatus.DONE },
       }),
       this.prisma.pageReservation.count({
-        where: {
-          status: ReservationStatus.IN_PROGRESS,
-          deadlineAt: { lt: now },
-        },
+        where: { status: ReservationStatus.EXPIRED },
       }),
     ]);
 
@@ -557,6 +571,7 @@ export class RequestsService {
     limit = 10,
     search?: string,
   ) {
+    await this.expireReservations();
     const paging = pagination(page, limit);
     const where: Prisma.RequestWhereInput = {
         status: RequestStatus.COORDINATOR_ACCEPTED,
@@ -578,14 +593,11 @@ export class RequestsService {
         ],
         AND: this.requestSearchAnd(search),
       };
-    const [requests, total] = await Promise.all([
-      this.prisma.request.findMany({
+    const requests = await this.prisma.request.findMany({
       where,
-      skip: paging.skip,
-      take: paging.limit,
       include: {
         reservations: {
-          where: { status: { not: ReservationStatus.REJECTED } },
+          where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
           select: {
             id: true,
             startPage: true,
@@ -598,25 +610,46 @@ export class RequestsService {
         volunteerAssignment: true,
       },
       orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.request.count({ where }),
-    ]);
+    });
 
-    const data = requests.map((request) => ({
-      ...request,
-      nextAvailablePage:
-        request.requestType === RequestType.ACCOMPANIMENT
-          ? null
-          : this.getNextAvailablePage(request.reservations),
-      reservedRanges: request.reservations.map((reservation) => ({
-        ...reservation,
-        effectiveStatus: this.getEffectiveStatus(reservation),
-      })),
-    }));
-    return paginated(data, total, paging.page, paging.limit);
+    const availableRequests = requests
+      .map((request) => {
+        const availableRanges =
+          request.requestType === RequestType.ACCOMPANIMENT ||
+          request.totalPages === null
+            ? []
+            : getAvailableRanges(request.totalPages, request.reservations);
+        const totalAvailablePages = availableRanges.reduce(
+          (total, range) => total + range.endPage - range.startPage + 1,
+          0,
+        );
+        return {
+          ...request,
+          nextAvailablePage: availableRanges[0]?.startPage ?? null,
+          availableRanges,
+          totalAvailablePages,
+          reservedRanges: request.reservations.map((reservation) => ({
+            ...reservation,
+            effectiveStatus: this.getEffectiveStatus(reservation),
+          })),
+        };
+      })
+      .filter(
+        (request) =>
+          request.requestType === RequestType.ACCOMPANIMENT ||
+          (request.totalPages !== null &&
+            request.nextAvailablePage !== null &&
+            request.nextAvailablePage <= request.totalPages),
+      );
+    const data = availableRequests.slice(
+      paging.skip,
+      paging.skip + paging.limit,
+    );
+    return paginated(data, availableRequests.length, paging.page, paging.limit);
   }
 
   async getVolunteerDashboard(volunteerId: number) {
+    await this.expireReservations();
     const now = new Date();
     const [acceptedRequests, activeReservations, completedReservations] =
       await Promise.all([
@@ -624,7 +657,7 @@ export class RequestsService {
           where: { status: RequestStatus.COORDINATOR_ACCEPTED },
           include: {
             reservations: {
-              where: { status: { not: ReservationStatus.REJECTED } },
+              where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
               select: {
                 volunteerId: true,
                 startPage: true,
@@ -660,7 +693,8 @@ export class RequestsService {
       );
       return (
         !hasActiveReservation &&
-        this.getNextAvailablePage(request.reservations) <= request.totalPages
+        getNextAvailableRange(request.totalPages, request.reservations) !==
+          null
       );
     });
 
@@ -677,22 +711,27 @@ export class RequestsService {
       available: availableRequests.length,
       inProgress: activeReservations + activeAccompaniment,
       completed: completedReservations + completedAccompaniment,
-      recentAvailable: availableRequests.slice(0, 5).map((request) => ({
-        id: request.id,
-        title:
-          request.bookName ??
-          request.title ??
-          (request.requestType === RequestType.ACCOMPANIMENT
-            ? 'طلب مرافقة'
-            : 'طلب تحويل كتاب'),
-        requestType: request.requestType,
-        details: request.details,
-        totalPages: request.totalPages,
-        nextAvailablePage:
-          request.requestType === RequestType.ACCOMPANIMENT
+      recentAvailable: availableRequests.slice(0, 5).map((request) => {
+        const availableRange =
+          request.requestType === RequestType.ACCOMPANIMENT ||
+          request.totalPages === null
             ? null
-            : this.getNextAvailablePage(request.reservations),
-      })),
+            : getNextAvailableRange(request.totalPages, request.reservations);
+        return {
+          id: request.id,
+          title:
+            request.bookName ??
+            request.title ??
+            (request.requestType === RequestType.ACCOMPANIMENT
+              ? 'طلب مرافقة'
+              : 'طلب تحويل كتاب'),
+          requestType: request.requestType,
+          details: request.details,
+          totalPages: request.totalPages,
+          nextAvailablePage: availableRange?.startPage ?? null,
+          nextAvailableEndPage: availableRange?.endPage ?? null,
+        };
+      }),
     };
   }
 
@@ -805,6 +844,14 @@ export class RequestsService {
     try {
       return await this.prisma.$transaction(
         async (tx) => {
+          await tx.pageReservation.updateMany({
+            where: {
+              status: ReservationStatus.IN_PROGRESS,
+              deadlineAt: { lt: new Date() },
+            },
+            data: { status: ReservationStatus.EXPIRED },
+          });
+
           const request = await tx.request.findUnique({
             where: { id: requestId },
             select: {
@@ -826,43 +873,67 @@ export class RequestsService {
               'This request type does not support page reservations',
             );
           }
-          if (!request.totalPages || dto.endPage > request.totalPages) {
-            throw new BadRequestException(
-              'Page range exceeds the request total pages',
-            );
+          if (!request.totalPages) {
+            throw new BadRequestException('Request has no reservable pages');
           }
 
           const activeReservations = await tx.pageReservation.findMany({
             where: {
               requestId,
-              status: { not: ReservationStatus.REJECTED },
+              status: { in: BLOCKING_RESERVATION_STATUSES },
             },
             select: { startPage: true, endPage: true },
-            orderBy: { endPage: 'asc' },
+            orderBy: { startPage: 'asc' },
           });
 
-          const startPage = this.getNextAvailablePage(activeReservations);
-          if (startPage > request.totalPages) {
+          const allocatedRanges = allocateAvailablePages(
+            request.totalPages,
+            activeReservations,
+            dto.pageCount,
+          );
+          if (!allocatedRanges) {
             throw new BadRequestException(
-              'All pages have already been reserved',
-            );
-          }
-          if (dto.endPage < startPage) {
-            throw new BadRequestException(
-              `End page must be greater than or equal to ${startPage}`,
+              'The requested number of pages is no longer available',
             );
           }
 
-          return tx.pageReservation.create({
-            data: {
-              requestId,
-              volunteerId,
-              startPage,
-              endPage: dto.endPage,
-              deadlineAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-            },
-            include: this.reservationRelations(),
-          });
+          const pageIncrement =
+            RESERVATION_PAGE_INCREMENT[request.requestType];
+          const totalAvailablePages = getAvailableRanges(
+            request.totalPages,
+            activeReservations,
+          ).reduce(
+            (total, range) => total + range.endPage - range.startPage + 1,
+            0,
+          );
+          const takesAllRemainingPages = dto.pageCount === totalAvailablePages;
+
+          if (
+            !pageIncrement ||
+            (!takesAllRemainingPages &&
+              (dto.pageCount < pageIncrement ||
+                dto.pageCount % pageIncrement !== 0))
+          ) {
+            throw new BadRequestException(
+              `Reservations must contain a multiple of ${pageIncrement} pages or all remaining pages`,
+            );
+          }
+
+          const deadlineAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+          return Promise.all(
+            allocatedRanges.map((range) =>
+              tx.pageReservation.create({
+                data: {
+                  requestId,
+                  volunteerId,
+                  startPage: range.startPage,
+                  endPage: range.endPage,
+                  deadlineAt,
+                },
+                include: this.reservationRelations(),
+              }),
+            ),
+          );
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
@@ -892,6 +963,7 @@ export class RequestsService {
     limit = 10,
     search?: string,
   ) {
+    await this.expireReservations();
     const paging = pagination(page, limit);
     const where: Prisma.PageReservationWhereInput = {
       volunteerId,
@@ -914,6 +986,7 @@ export class RequestsService {
   }
 
   async completeReservation(id: number, volunteerId: number) {
+    await this.expireReservations();
     const reservation = await this.requireOwnedActiveReservation(
       id,
       volunteerId,
@@ -951,6 +1024,7 @@ export class RequestsService {
     }
 
     await this.docxMergeService.validate(file.path);
+    await this.expireReservations();
     const reservation = await this.requireOwnedActiveReservation(
       id,
       volunteerId,
@@ -965,7 +1039,7 @@ export class RequestsService {
       where: { id: reservation.requestId },
       include: {
         reservations: {
-          where: { status: { not: ReservationStatus.REJECTED } },
+          where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
           select: {
             id: true,
             startPage: true,
@@ -1077,6 +1151,7 @@ export class RequestsService {
   }
 
   async rejectReservation(id: number, volunteerId: number, reason?: string) {
+    await this.expireReservations();
     await this.requireOwnedActiveReservation(id, volunteerId);
     return this.prisma.pageReservation.update({
       where: { id },
@@ -1085,6 +1160,26 @@ export class RequestsService {
         rejectedAt: new Date(),
         rejectionReason: reason?.trim() || null,
       },
+    });
+  }
+
+  async rejectVolunteerReservation(id: number, reason?: string) {
+    await this.expireReservations();
+    const reservation = await this.prisma.pageReservation.findUnique({
+      where: { id },
+    });
+    if (!reservation) throw new NotFoundException('Reservation not found');
+    if (reservation.status !== ReservationStatus.IN_PROGRESS) {
+      throw new BadRequestException('Reservation is no longer in progress');
+    }
+    return this.prisma.pageReservation.update({
+      where: { id },
+      data: {
+        status: ReservationStatus.REJECTED,
+        rejectedAt: new Date(),
+        rejectionReason: reason?.trim() || null,
+      },
+      include: this.reservationRelations(),
     });
   }
 
@@ -1118,11 +1213,12 @@ export class RequestsService {
     _coordinatorId: number,
     file: Express.Multer.File,
   ) {
+    await this.expireReservations();
     const request = await this.prisma.request.findUnique({
       where: { id: requestId },
       include: {
         reservations: {
-          where: { status: { not: ReservationStatus.REJECTED } },
+          where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
           select: {
             startPage: true,
             endPage: true,
@@ -1381,26 +1477,21 @@ export class RequestsService {
     } satisfies Prisma.PageReservationInclude;
   }
 
+  private async expireReservations() {
+    await this.prisma.pageReservation.updateMany({
+      where: {
+        status: ReservationStatus.IN_PROGRESS,
+        deadlineAt: { lt: new Date() },
+      },
+      data: { status: ReservationStatus.EXPIRED },
+    });
+  }
+
   private getEffectiveStatus(reservation: {
     status: ReservationStatus;
     deadlineAt: Date;
   }) {
-    return reservation.status === ReservationStatus.IN_PROGRESS &&
-      reservation.deadlineAt < new Date()
-      ? ReservationStatus.LATE
-      : reservation.status;
-  }
-
-  private getNextAvailablePage(
-    reservations: Array<{ startPage: number; endPage: number }>,
-  ) {
-    return (
-      reservations.reduce(
-        (highestEndPage, reservation) =>
-          Math.max(highestEndPage, reservation.endPage),
-        0,
-      ) + 1
-    );
+    return reservation.status;
   }
 
   private normalizeBookName(bookName: string) {
@@ -1438,7 +1529,7 @@ export class RequestsService {
         requestType: true,
         outputStoredName: true,
         reservations: {
-          where: { status: { not: ReservationStatus.REJECTED } },
+          where: { status: { in: BLOCKING_RESERVATION_STATUSES } },
           select: {
             startPage: true,
             endPage: true,
