@@ -10,6 +10,9 @@ export class VisuallyImpairedGuard extends JwtAuthGuard {
     if (request.user?.role !== 'visually_impired') {
       throw new ForbiddenException('Visually impaired access required');
     }
+    if (request.user?.status !== 'ACTIVE') {
+      throw new ForbiddenException('Active account required');
+    }
 
     return true;
   }

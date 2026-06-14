@@ -5,6 +5,7 @@ import {
   IsIn,
   IsISO31661Alpha2,
   IsPhoneNumber,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -53,4 +54,9 @@ export class SignupDto {
   @ApiProperty({ enum: SIGNUP_ROLES, example: 'volunteer' })
   @IsIn(SIGNUP_ROLES)
   role!: SignupRole;
+
+  // Multer handles the file itself; this keeps multipart field validation from
+  // rejecting the healthReport key before @UploadedFile() receives it.
+  @IsOptional()
+  healthReport?: unknown;
 }

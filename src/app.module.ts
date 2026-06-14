@@ -9,6 +9,8 @@ import { RequestsModule } from './requests/requests.module';
 import { LibraryModule } from './library/library.module';
 import { SettingsModule } from './settings/settings.module';
 import { OpportunitiesModule } from './opportunities/opportunities.module';
+import { MailModule } from './mail/mail.module';
+import { VerificationsModule } from './verifications/verifications.module';
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { OpportunitiesModule } from './opportunities/opportunities.module';
     LibraryModule,
     SettingsModule,
     OpportunitiesModule,
+    MailModule,
+    VerificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
