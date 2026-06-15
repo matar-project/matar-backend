@@ -6,6 +6,12 @@ model User {
   country       String?
   city          String?
   passwordHash  String
+  status        AccountStatus  @default(ACTIVE)
+  emailVerified Boolean        @default(true)
+  emailVerificationCodeHash String?
+  emailVerificationCodeExpiresAt DateTime?
+  emailVerificationAttempts Int @default(0)
+  emailVerificationSentAt DateTime?
   roleId        Int
   role          Role           @relation(fields: [roleId], references: [id])
   refreshTokens RefreshToken[]
@@ -14,8 +20,47 @@ model User {
   pageReservations PageReservation[] @relation("VolunteerReservations")
   requestVolunteerAssignments RequestVolunteerAssignment[] @relation("RequestVolunteerAssignments")
   opportunityParticipations OpportunityParticipation[]
+  verificationDocuments VerificationDocument[] @relation("VerificationDocumentOwner")
+  reviewedVerificationDocuments VerificationDocument[] @relation("VerificationDocumentReviewer")
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
   @@index([roleId])
+  @@index([status])
+}
+
+enum AccountStatus {
+  EMAIL_VERIFICATION_PENDING
+  PENDING_ADMIN_REVIEW
+  ACTIVE
+  REJECTED
+  SUSPENDED
+}
+
+enum VerificationDocumentStatus {
+  AWAITING_EMAIL_VERIFICATION
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model VerificationDocument {
+  id                Int                        @id @default(autoincrement())
+  userId            Int
+  user              User                       @relation("VerificationDocumentOwner", fields: [userId], references: [id], onDelete: Cascade)
+  filePath          String
+  fileKey           String
+  originalName      String
+  fileType          String
+  fileSize          Int
+  status            VerificationDocumentStatus @default(PENDING)
+  reviewedByAdminId Int?
+  reviewedByAdmin   User?                      @relation("VerificationDocumentReviewer", fields: [reviewedByAdminId], references: [id])
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+
+  @@index([userId, status])
+  @@index([status, createdAt])
 }

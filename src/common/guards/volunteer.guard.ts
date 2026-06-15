@@ -10,6 +10,9 @@ export class VolunteerGuard extends JwtAuthGuard {
     if (request.user?.role !== 'volunteer') {
       throw new ForbiddenException('Volunteer access required');
     }
+    if (request.user?.status !== 'ACTIVE') {
+      throw new ForbiddenException('Active account required');
+    }
 
     return true;
   }
