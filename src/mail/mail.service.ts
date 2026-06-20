@@ -4,22 +4,36 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
+import * as nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly resend: Resend | null;
+  private readonly transporter: Transporter | null;
   private readonly from: string;
 
   constructor(private readonly config: ConfigService) {
-    const apiKey = this.config.get<string>('RESEND_API_KEY');
-    this.resend = apiKey ? new Resend(apiKey) : null;
-    // Falls back to Resend's shared test sender, which only delivers to the
-    // account owner's address. Set RESEND_FROM to a verified-domain address
-    // (e.g. "Matar <noreply@yourdomain.com>") to send to real recipients.
-    this.from =
-      this.config.get<string>('RESEND_FROM') ?? 'Matar <onboarding@resend.dev>';
+    const host = this.config.get<string>('SMTP_HOST');
+    const user = this.config.get<string>('SMTP_USER');
+    const pass = this.config.get<string>('SMTP_PASS');
+
+    // Gmail SMTP can deliver to any recipient (no domain verification needed),
+    // unlike Resend's shared test sender. Use an App Password for SMTP_PASS
+    // (requires 2-Step Verification on the Google account).
+    if (host && user && pass) {
+      const port = Number(this.config.get<string>('SMTP_PORT') ?? '465');
+      this.transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: this.config.get<string>('SMTP_SECURE') !== 'false' && port === 465,
+        auth: { user, pass },
+      });
+    } else {
+      this.transporter = null;
+    }
+
+    this.from = this.config.get<string>('SMTP_FROM') ?? `Matar <${user ?? ''}>`;
   }
 
   async sendVerificationCode(email: string, name: string, code: string) {
@@ -47,7 +61,7 @@ export class MailService {
   }
 
   ensureConfigured() {
-    if (!this.resend) {
+    if (!this.transporter) {
       throw new ServiceUnavailableException(
         'خدمة البريد الإلكتروني غير مهيأة. يرجى التواصل مع الإدارة.',
       );
@@ -58,23 +72,22 @@ export class MailService {
     this.ensureConfigured();
 
     const start = Date.now();
-    const { data, error } = await this.resend!.emails.send({
-      from: this.from,
-      to,
-      subject,
-      html,
-    });
-
-    if (error) {
-      this.logger.error('Resend email delivery failed', error);
+    try {
+      const info = await this.transporter!.sendMail({
+        from: this.from,
+        to,
+        subject,
+        html,
+      });
+      this.logger.log(
+        `Email to ${to} sent in ${Date.now() - start}ms (id: ${info.messageId})`,
+      );
+    } catch (error) {
+      this.logger.error('SMTP email delivery failed', error);
       throw new ServiceUnavailableException(
         'تعذر إرسال البريد الإلكتروني. يرجى المحاولة لاحقاً.',
       );
     }
-
-    this.logger.log(
-      `Email to ${to} accepted by Resend in ${Date.now() - start}ms (id: ${data?.id})`,
-    );
   }
 
   private escape(value: string) {
