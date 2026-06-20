@@ -11,6 +11,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { IsStrongPassword } from './password-strength.validator';
 
 export const SIGNUP_ROLES = ['volunteer', 'visually_impired'] as const;
 export type SignupRole = (typeof SIGNUP_ROLES)[number];
@@ -49,6 +50,7 @@ export class SignupDto {
   @IsString()
   @MinLength(8)
   @MaxLength(72)
+  @IsStrongPassword()
   password!: string;
 
   @ApiProperty({ enum: SIGNUP_ROLES, example: 'volunteer' })
