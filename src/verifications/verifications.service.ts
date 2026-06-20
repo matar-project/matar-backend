@@ -96,9 +96,10 @@ export class VerificationsService {
   }
 
   async reject(documentId: number, adminId: number, reason: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const document = await tx.verificationDocument.findUnique({
         where: { id: documentId },
+        include: { user: true },
       });
       if (!document) throw new NotFoundException('التقرير غير موجود');
       if (document.status !== VerificationDocumentStatus.PENDING) {
@@ -117,8 +118,22 @@ export class VerificationsService {
         where: { id: document.userId },
         data: { status: AccountStatus.REJECTED },
       });
-      return { message: 'تم رفض التقرير' };
+      return document.user;
     });
+
+    let emailSent = true;
+    try {
+      await this.mail.sendRejectionEmail(result.email, result.name, reason);
+    } catch (error) {
+      emailSent = false;
+      this.logger.error(`Rejection email failed for userId=${result.id}`, error);
+    }
+    return {
+      message: emailSent
+        ? 'تم رفض التقرير وإرسال إشعار بالبريد الإلكتروني'
+        : 'تم رفض التقرير، لكن تعذر إرسال إشعار البريد الإلكتروني',
+      emailSent,
+    };
   }
 
   async reupload(userId: number, file?: Express.Multer.File) {
