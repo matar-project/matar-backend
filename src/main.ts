@@ -1,8 +1,13 @@
+import { setDefaultResultOrder } from 'node:dns';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import cookieParser from 'cookie-parser';
+
+// Render containers have no outbound IPv6. Without this, Node resolves hosts
+// (e.g. smtp.gmail.com) to an IPv6 address first and fails with ENETUNREACH.
+setDefaultResultOrder('ipv4first');
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
